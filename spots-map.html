@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Spots Map</title>
+<link href="https://api.mapbox.com/mapbox-gl-js/v3.15.0/mapbox-gl.css" rel="stylesheet">
+<script src="https://api.mapbox.com/mapbox-gl-js/v3.15.0/mapbox-gl.js"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; }
+  #map { width: 100%; height: 100%; background: #E2E2D8; }
+
+  /* --- Popup Styling --- */
+  .mapboxgl-popup { max-width: 320px !important; }
+  .mapboxgl-popup-content {
+    font-family: "Atkinson Hyperlegible Mono", monospace;
+    padding: 0 !important;
+    border-radius: 12px;
+    box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+    overflow: hidden;
+    background-color: #E2E2D8 !important;
+  }
+  .mapboxgl-popup-close-button {
+    width: 40px !important; height: 40px !important;
+    font-size: 24px !important; line-height: 40px !important;
+    display: flex !important; align-items: center; justify-content: center;
+    color: #232320 !important; background: rgba(255, 255, 255, 0.4);
+    border-radius: 50%; margin: 8px; z-index: 10; border: none; cursor: pointer;
+  }
+  .popup-image { width: 100%; height: 160px; object-fit: cover; display: block; }
+  .popup-text-container { padding: 12px 16px 16px 16px; }
+  .popup-title { margin: 0 0 4px 0; font-size: 14px; color: #232320; font-weight: 700; }
+  .popup-desc { margin: 0; font-size: 11px; color: #232320; line-height: 1.4; }
+  .popup-embed { padding: 0 16px 12px 16px; }
+  .popup-embed iframe { border-radius: 8px; }
+
+  .mapboxgl-popup-anchor-top .mapboxgl-popup-tip { border-bottom-color: #E2E2D8 !important; }
+  .mapboxgl-popup-anchor-bottom .mapboxgl-popup-tip { border-top-color: #E2E2D8 !important; }
+  .mapboxgl-popup-anchor-left .mapboxgl-popup-tip { border-right-color: #E2E2D8 !important; }
+  .mapboxgl-popup-anchor-right .mapboxgl-popup-tip { border-left-color: #E2E2D8 !important; }
+  .mapboxgl-popup-anchor-top-left .mapboxgl-popup-tip { border-bottom-color: #E2E2D8 !important; }
+  .mapboxgl-popup-anchor-top-right .mapboxgl-popup-tip { border-bottom-color: #E2E2D8 !important; }
+  .mapboxgl-popup-anchor-bottom-left .mapboxgl-popup-tip { border-top-color: #E2E2D8 !important; }
+  .mapboxgl-popup-anchor-bottom-right .mapboxgl-popup-tip { border-top-color: #E2E2D8 !important; }
+  .mapboxgl-popup-tip { border-top-color: #E2E2D8 !important; }
+
+  /* Status messages */
+  #status-msg {
+    position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    font-family: "Atkinson Hyperlegible Mono", monospace;
+    text-align: center; color: #232320; padding: 24px;
+    display: none;
+  }
+  #status-msg h2 { font-size: 18px; margin-bottom: 8px; }
+  #status-msg p { font-size: 13px; opacity: 0.7; }
+</style>
+</head>
+<body>
+
+<div id="map"></div>
+<div id="status-msg">
+  <h2 id="status-title"></h2>
+  <p id="status-detail"></p>
+</div>
+
+<script>
+// ============================================================
+// CONFIGURATION
+// ============================================================
+const SHEET_CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vS_FS3V67XN2-ywI6Ys8R4e_uadcZw_96uMGgB_LOH450mTUIqGelXZL0gg1mgAYFqOWeAHg9Dww1j7/pub?output=csv';
+const MAPBOX_TOKEN = 'pk.eyJ1IjoicG9zdGFsc291bmRzIiwiYSI6ImNtamM1cTR6YzBsbXUzZHB5NTRvbDV4aTIifQ.9KaoFRtAWzKkqeOpyA0SgA';
+const MAPBOX_STYLE = 'mapbox://styles/postalsounds/cmmw7mtb7000x01sa0ifddo9w';
+
+// Category → color mapping
+const CATEGORY_COLORS = {
+  'Tiendas Musicales': '#92ADEA',
+  'Historias Musicales': '#F0CEFD',
+  'Música en Vivo': '#95EA92',
+  'Educación & Cultura': '#91E7EB'
+};
+const DEFAULT_COLOR = '#CCCCCC';
+
+// ============================================================
+// CSV PARSER
+// ============================================================
+function parseCSV(text) {
+  const lines = [];
+  let current = '';
+  let inQuotes = false;
+
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === '"') {
+      inQuotes = !inQuotes;
+      current += ch;
+    } else if ((ch === '\n' || ch === '\r') && !inQuotes) {
+      if (current.trim()) lines.push(current);
+      current = '';
+      if (ch === '\r' && text[i + 1] === '\n') i++;
+    } else {
+      current += ch;
+    }
+  }
+  if (current.trim()) lines.push(current);
+
+  const rows = [];
+  for (const line of lines) {
+    const fields = [];
+    let field = '';
+    let inQ = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (ch === '"') {
+        if (inQ && line[i + 1] === '"') { field += '"'; i++; }
+        else { inQ = !inQ; }
+      } else if (ch === ',' && !inQ) {
+        fields.push(field); field = '';
+      } else {
+        field += ch;
+      }
+    }
+    fields.push(field);
+    rows.push(fields);
+  }
+
+  const headers = rows[0];
+  const data = [];
+  for (let i = 1; i < rows.length; i++) {
+    const obj = {};
+    for (let j = 0; j < headers.length; j++) {
+      obj[headers[j].trim()] = (rows[i][j] || '').trim();
+    }
+    data.push(obj);
+  }
+  return data;
+}
+
+function parseCoord(val) {
+  if (!val) return NaN;
+  return parseFloat(val.replace(',', '.'));
+}
+
+function showStatus(title, detail) {
+  document.getElementById('status-msg').style.display = 'block';
+  document.getElementById('status-title').textContent = title;
+  document.getElementById('status-detail').textContent = detail || '';
+}
+function hideStatus() {
+  document.getElementById('status-msg').style.display = 'none';
+}
+
+// ============================================================
+// MAIN
+// ============================================================
+async function init() {
+  showStatus('Cargando datos...');
+
+  const params = new URLSearchParams(window.location.search);
+  const typeParam = params.get('type'); // "Free" or "Premium"
+
+  // 1. Fetch CSV
+  let csvText;
+  try {
+    const res = await fetch(SHEET_CSV_URL);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    csvText = await res.text();
+  } catch (err) {
+    showStatus('Error cargando datos', 'No se pudo acceder a la hoja de cálculo.');
+    console.error('Fetch error:', err);
+    return;
+  }
+
+  // 2. Parse
+  const rows = parseCSV(csvText);
+  if (!rows.length) {
+    showStatus('Sin datos', 'La hoja de cálculo está vacía.');
+    return;
+  }
+
+  // 3. Filter by type if param provided
+  let spots = [];
+  for (const row of rows) {
+    const lat = parseCoord(row.latitude);
+    const lng = parseCoord(row.longitude);
+    if (isNaN(lat) || isNaN(lng)) continue;
+
+    const spotType = (row.type || '').trim();
+    const category = (row.category || '').trim();
+
+    // Filter by type param
+    if (typeParam) {
+      if (spotType.toLowerCase() !== typeParam.toLowerCase()) continue;
+    }
+
+    spots.push({
+      lat, lng,
+      name: row.name || 'Sin nombre',
+      description: row.description || '',
+      category: category,
+      type: spotType,
+      url: row.url || '',
+      embed: row.embed || '',
+      ciudad: row.ciudad || ''
+    });
+  }
+
+  if (!spots.length) {
+    showStatus('Sin resultados', typeParam
+      ? 'No se encontraron spots de tipo "' + typeParam + '".'
+      : 'No se encontraron spots con coordenadas válidas.');
+    return;
+  }
+
+  hideStatus();
+
+  // ============================================================
+  // BUILD GEOJSON
+  // ============================================================
+  const geojson = {
+    type: 'FeatureCollection',
+    features: spots.map(s => ({
+      type: 'Feature',
+      geometry: { type: 'Point', coordinates: [s.lng, s.lat] },
+      properties: {
+        name: s.name,
+        description: s.description,
+        category: s.category,
+        url: s.url,
+        embed: s.embed,
+        color: CATEGORY_COLORS[s.category] || DEFAULT_COLOR
+      }
+    }))
+  };
+
+  // ============================================================
+  // INITIALIZE MAP
+  // ============================================================
+  mapboxgl.accessToken = MAPBOX_TOKEN;
+
+  const map = new mapboxgl.Map({
+    container: 'map',
+    style: MAPBOX_STYLE,
+    center: [spots[0].lng, spots[0].lat],
+    zoom: 12,
+    attributionControl: false
+  });
+
+  map.addControl(new mapboxgl.AttributionControl({ compact: true }));
+
+  map.on('load', function () {
+
+    // Fit bounds
+    const bounds = new mapboxgl.LngLatBounds();
+    spots.forEach(s => bounds.extend([s.lng, s.lat]));
+    map.fitBounds(bounds, { padding: 40, maxZoom: 15, duration: 0 });
+
+    // Add source
+    map.addSource('spots', {
+      type: 'geojson',
+      data: geojson
+    });
+
+    // Add circle layer — colored by category
+    map.addLayer({
+      id: 'spots-circles',
+      type: 'circle',
+      source: 'spots',
+      paint: {
+        'circle-radius': 7,
+        'circle-color': ['get', 'color'],
+        'circle-opacity': 0.9,
+        'circle-stroke-width': 0,
+        'circle-emissive-strength': 1
+      }
+    });
+
+    // Cursor on hover
+    map.on('mouseenter', 'spots-circles', () => {
+      map.getCanvas().style.cursor = 'pointer';
+    });
+    map.on('mouseleave', 'spots-circles', () => {
+      map.getCanvas().style.cursor = '';
+    });
+
+    // Popup on click
+    map.on('click', 'spots-circles', function (e) {
+      const props = e.features[0].properties;
+      const coords = e.features[0].geometry.coordinates.slice();
+
+      // Handle world wrap
+      while (Math.abs(e.lngLat.lng - coords[0]) > 180) {
+        coords[0] += e.lngLat.lng > coords[0] ? 360 : -360;
+      }
+
+      let html = '';
+      if (props.url) {
+        html += '<img src="' + props.url + '" class="popup-image" onerror="this.style.display=\'none\'">';
+      }
+      html += '<div class="popup-text-container">';
+      html += '<h3 class="popup-title">' + props.name + '</h3>';
+      html += '<p class="popup-desc">' + props.description + '</p>';
+      html += '</div>';
+      if (props.embed) {
+        html += '<div class="popup-embed">' + props.embed + '</div>';
+      }
+
+      new mapboxgl.Popup({ offset: 10, maxWidth: '320px' })
+        .setLngLat(coords)
+        .setHTML(html)
+        .addTo(map);
+    });
+
+    // Controls
+    map.addControl(new mapboxgl.GeolocateControl({
+      positionOptions: { enableHighAccuracy: true },
+      trackUserLocation: true,
+      showUserHeading: true
+    }));
+    map.addControl(new mapboxgl.NavigationControl(), 'top-right');
+
+    map.resize();
+  });
+
+  window.addEventListener('resize', () => map && map.resize());
+  setTimeout(() => map && map.resize(), 500);
+}
+
+init();
+</script>
+</body>
+</html>
