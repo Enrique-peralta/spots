@@ -6,6 +6,9 @@
 <title>Spots Map</title>
 <link href="https://api.mapbox.com/mapbox-gl-js/v3.15.0/mapbox-gl.css" rel="stylesheet">
 <script src="https://api.mapbox.com/mapbox-gl-js/v3.15.0/mapbox-gl.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Jost:wght@600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0&icon_names=my_location">
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body { width: 100%; height: 100%; overflow: hidden; }
@@ -54,25 +57,67 @@
   }
   #status-msg h2 { font-size: 18px; margin-bottom: 8px; }
   #status-msg p { font-size: 13px; opacity: 0.7; }
+
+  /* Hide default mapbox controls */
+  .mapboxgl-ctrl-bottom-right { display: none !important; }
+
+  /* Custom geolocate button */
+  #locate-btn {
+    position: absolute;
+    bottom: 24px;
+    right: 24px;
+    width: 52px;
+    height: 52px;
+    border-radius: 12px;
+    background: #BFEF2B;
+    border: none;
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+    z-index: 2;
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+    padding: 0;
+  }
+  #locate-btn:hover { transform: scale(1.06); box-shadow: 0 4px 12px rgba(0,0,0,0.25); }
+  #locate-btn:active { transform: scale(0.97); }
+  #locate-btn .material-symbols-outlined {
+    font-size: 22px;
+    color: #232320;
+    font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+    line-height: 1;
+  }
+  #locate-btn .locate-label {
+    font-family: 'Jost', sans-serif;
+    font-weight: 600;
+    font-size: 7.5px;
+    color: #232320;
+    letter-spacing: 0.05em;
+    line-height: 1;
+    text-transform: uppercase;
+  }
 </style>
 </head>
 <body>
 
 <div id="map"></div>
+<button id="locate-btn" title="Mi ubicación">
+  <span class="material-symbols-outlined">my_location</span>
+  <span class="locate-label">Ubicación</span>
+</button>
 <div id="status-msg">
   <h2 id="status-title"></h2>
   <p id="status-detail"></p>
 </div>
 
 <script>
-// ============================================================
-// CONFIGURATION
-// ============================================================
 const SHEET_CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vS_FS3V67XN2-ywI6Ys8R4e_uadcZw_96uMGgB_LOH450mTUIqGelXZL0gg1mgAYFqOWeAHg9Dww1j7/pub?output=csv';
 const MAPBOX_TOKEN = 'pk.eyJ1IjoicG9zdGFsc291bmRzIiwiYSI6ImNtamM1cTR6YzBsbXUzZHB5NTRvbDV4aTIifQ.9KaoFRtAWzKkqeOpyA0SgA';
 const MAPBOX_STYLE = 'mapbox://styles/postalsounds/cmmw7mtb7000x01sa0ifddo9w';
 
-// Category → color mapping
 const CATEGORY_COLORS = {
   'Tiendas Musicales': '#92ADEA',
   'Historias Musicales': '#F0CEFD',
@@ -81,49 +126,34 @@ const CATEGORY_COLORS = {
 };
 const DEFAULT_COLOR = '#CCCCCC';
 
-// ============================================================
-// CSV PARSER
-// ============================================================
 function parseCSV(text) {
   const lines = [];
-  let current = '';
-  let inQuotes = false;
-
+  let current = '', inQuotes = false;
   for (let i = 0; i < text.length; i++) {
     const ch = text[i];
-    if (ch === '"') {
-      inQuotes = !inQuotes;
-      current += ch;
-    } else if ((ch === '\n' || ch === '\r') && !inQuotes) {
+    if (ch === '"') { inQuotes = !inQuotes; current += ch; }
+    else if ((ch === '\n' || ch === '\r') && !inQuotes) {
       if (current.trim()) lines.push(current);
       current = '';
       if (ch === '\r' && text[i + 1] === '\n') i++;
-    } else {
-      current += ch;
-    }
+    } else { current += ch; }
   }
   if (current.trim()) lines.push(current);
-
   const rows = [];
   for (const line of lines) {
     const fields = [];
-    let field = '';
-    let inQ = false;
+    let field = '', inQ = false;
     for (let i = 0; i < line.length; i++) {
       const ch = line[i];
       if (ch === '"') {
         if (inQ && line[i + 1] === '"') { field += '"'; i++; }
         else { inQ = !inQ; }
-      } else if (ch === ',' && !inQ) {
-        fields.push(field); field = '';
-      } else {
-        field += ch;
-      }
+      } else if (ch === ',' && !inQ) { fields.push(field); field = ''; }
+      else { field += ch; }
     }
     fields.push(field);
     rows.push(fields);
   }
-
   const headers = rows[0];
   const data = [];
   for (let i = 1; i < rows.length; i++) {
@@ -150,16 +180,12 @@ function hideStatus() {
   document.getElementById('status-msg').style.display = 'none';
 }
 
-// ============================================================
-// MAIN
-// ============================================================
 async function init() {
   showStatus('Cargando datos...');
 
   const params = new URLSearchParams(window.location.search);
-  const typeParam = params.get('type'); // "Free" or "Premium"
+  const typeParam = params.get('type');
 
-  // 1. Fetch CSV
   let csvText;
   try {
     const res = await fetch(SHEET_CSV_URL);
@@ -167,38 +193,25 @@ async function init() {
     csvText = await res.text();
   } catch (err) {
     showStatus('Error cargando datos', 'No se pudo acceder a la hoja de cálculo.');
-    console.error('Fetch error:', err);
     return;
   }
 
-  // 2. Parse
   const rows = parseCSV(csvText);
-  if (!rows.length) {
-    showStatus('Sin datos', 'La hoja de cálculo está vacía.');
-    return;
-  }
+  if (!rows.length) { showStatus('Sin datos', 'La hoja de cálculo está vacía.'); return; }
 
-  // 3. Filter by type if param provided
   let spots = [];
   for (const row of rows) {
     const lat = parseCoord(row.latitude);
     const lng = parseCoord(row.longitude);
     if (isNaN(lat) || isNaN(lng)) continue;
-
     const spotType = (row.type || '').trim();
     const category = (row.category || '').trim();
-
-    // Filter by type param
-    if (typeParam) {
-      if (spotType.toLowerCase() !== typeParam.toLowerCase()) continue;
-    }
-
+    if (typeParam && spotType.toLowerCase() !== typeParam.toLowerCase()) continue;
     spots.push({
       lat, lng,
       name: row.name || 'Sin nombre',
       description: row.description || '',
-      category: category,
-      type: spotType,
+      category, type: spotType,
       url: row.url || '',
       embed: row.embed || '',
       ciudad: row.ciudad || ''
@@ -214,35 +227,24 @@ async function init() {
 
   hideStatus();
 
-  // ============================================================
-  // BUILD GEOJSON
-  // ============================================================
   const geojson = {
     type: 'FeatureCollection',
     features: spots.map(s => ({
       type: 'Feature',
       geometry: { type: 'Point', coordinates: [s.lng, s.lat] },
       properties: {
-        name: s.name,
-        description: s.description,
-        category: s.category,
-        url: s.url,
-        embed: s.embed,
+        name: s.name, description: s.description, category: s.category,
+        url: s.url, embed: s.embed,
         color: CATEGORY_COLORS[s.category] || DEFAULT_COLOR
       }
     }))
   };
 
-  // ============================================================
-  // INITIALIZE MAP
-  // ============================================================
   mapboxgl.accessToken = MAPBOX_TOKEN;
-
   const map = new mapboxgl.Map({
     container: 'map',
     style: MAPBOX_STYLE,
-    center: [0, 0],
-    zoom: 1,
+    center: [0, 0], zoom: 1,
     attributionControl: false
   });
 
@@ -250,49 +252,44 @@ async function init() {
 
   map.on('load', function () {
 
-    // Ask for geolocation and fly to user's location
-    if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          const userLng = position.coords.longitude;
-          const userLat = position.coords.latitude;
-
-          map.flyTo({
-            center: [userLng, userLat],
-            zoom: 14,
-            essential: true
-          });
-
-          new mapboxgl.Marker({ color: '#FF522A' })
-            .setLngLat([userLng, userLat])
-            .addTo(map);
-        },
-        () => {
-          console.log('User denied location access or an error occurred.');
-          // Fallback: fit to all spots
-          const bounds = new mapboxgl.LngLatBounds();
-          spots.forEach(s => bounds.extend([s.lng, s.lat]));
-          map.fitBounds(bounds, { padding: 40, maxZoom: 15 });
-        }
-      );
-    } else {
-      console.log('Geolocation is not supported by this browser.');
+    function fitToSpots() {
       const bounds = new mapboxgl.LngLatBounds();
       spots.forEach(s => bounds.extend([s.lng, s.lat]));
       map.fitBounds(bounds, { padding: 40, maxZoom: 15 });
     }
 
-    // Add source
-    map.addSource('spots', {
-      type: 'geojson',
-      data: geojson
+    // GeolocateControl handles fly-to + blue dot
+    const geolocate = new mapboxgl.GeolocateControl({
+      positionOptions: { enableHighAccuracy: true },
+      trackUserLocation: true,
+      showUserHeading: true
+    });
+    map.addControl(geolocate, 'bottom-right');
+
+    // Wire custom button
+    document.getElementById('locate-btn').addEventListener('click', () => {
+      geolocate.trigger();
     });
 
-    // Add circle layer — colored by category
+    // Auto-trigger on load — if GPS denied, fall back to IP geolocation or fitToSpots
+    geolocate.once('error', () => {
+      fetch('https://ipapi.co/json/')
+        .then(r => r.json())
+        .then(d => {
+          if (d.longitude && d.latitude) {
+            map.flyTo({ center: [d.longitude, d.latitude], zoom: 14, essential: true });
+          } else {
+            fitToSpots();
+          }
+        })
+        .catch(() => fitToSpots());
+    });
+    setTimeout(() => geolocate.trigger(), 200);
+
+    // Add source + layer
+    map.addSource('spots', { type: 'geojson', data: geojson });
     map.addLayer({
-      id: 'spots-circles',
-      type: 'circle',
-      source: 'spots',
+      id: 'spots-circles', type: 'circle', source: 'spots',
       paint: {
         'circle-radius': 7,
         'circle-color': ['get', 'color'],
@@ -302,49 +299,24 @@ async function init() {
       }
     });
 
-    // Cursor on hover
-    map.on('mouseenter', 'spots-circles', () => {
-      map.getCanvas().style.cursor = 'pointer';
-    });
-    map.on('mouseleave', 'spots-circles', () => {
-      map.getCanvas().style.cursor = '';
-    });
+    map.on('mouseenter', 'spots-circles', () => { map.getCanvas().style.cursor = 'pointer'; });
+    map.on('mouseleave', 'spots-circles', () => { map.getCanvas().style.cursor = ''; });
 
-    // Popup on click
     map.on('click', 'spots-circles', function (e) {
       const props = e.features[0].properties;
       const coords = e.features[0].geometry.coordinates.slice();
-
-      // Handle world wrap
       while (Math.abs(e.lngLat.lng - coords[0]) > 180) {
         coords[0] += e.lngLat.lng > coords[0] ? 360 : -360;
       }
-
       let html = '';
-      if (props.url) {
-        html += '<img src="' + props.url + '" class="popup-image" onerror="this.style.display=\'none\'">';
-      }
+      if (props.url) html += '<img src="' + props.url + '" class="popup-image" onerror="this.style.display=\'none\'">';
       html += '<div class="popup-text-container">';
       html += '<h3 class="popup-title">' + props.name + '</h3>';
       html += '<p class="popup-desc">' + props.description + '</p>';
       html += '</div>';
-      if (props.embed) {
-        html += '<div class="popup-embed">' + props.embed + '</div>';
-      }
-
-      new mapboxgl.Popup({ offset: 10, maxWidth: '320px' })
-        .setLngLat(coords)
-        .setHTML(html)
-        .addTo(map);
+      if (props.embed) html += '<div class="popup-embed">' + props.embed + '</div>';
+      new mapboxgl.Popup({ offset: 10, maxWidth: '320px' }).setLngLat(coords).setHTML(html).addTo(map);
     });
-
-    // Controls
-    map.addControl(new mapboxgl.GeolocateControl({
-      positionOptions: { enableHighAccuracy: true },
-      trackUserLocation: true,
-      showUserHeading: true
-    }));
-    map.addControl(new mapboxgl.NavigationControl(), 'top-right');
 
     map.resize();
   });
